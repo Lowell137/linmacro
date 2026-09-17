@@ -1,24 +1,18 @@
-# LinMacro ⚡ Auto Clicker
+# LinMacro
 
-A modern, lightweight, lightning-fast Auto Clicker for Linux (**Wayland & X11**).
+A lightweight Linux auto-clicker for Wayland and X11.
 
-- **Clean & Focused:** Directly set your CPS (Clicks Per Second) and activation key.
-- **Wayland (GNOME/KDE/Sway/Hyprland) & X11:** Dedicated virtual mouse device recognized natively by `libinput` and `mutter`.
-- **Modes:**
-  - **Toggle Mode:** Press hotkey once to start clicking, press again to stop.
-  - **Hold Mode:** Clicks while holding the hotkey down.
-- **Emergency Killswitch:** `Pause/Break` key immediately aborts clicking.
-
----
-
-## How to Run
+## Run
 
 ```bash
 cd ~/Projects/linmacro
 ./run.sh
 ```
 
-Or run the release binary:
-```bash
-~/Projects/linmacro/target/release/linmacro
-```
+## Features
+
+- **CPS Slider & Unlimited:** Adjust from 1 to 5,000 CPS or go full speed with **Unlimited**.
+- **Global Shortcut:** Press **F8** (integrated via GNOME shortcut) or click Start.
+- **Mouse Buttons:** Left, Right, or Middle click.
+- **Modes:** Toggle or Hold.
+- **Killswitch:** Press **Pause/Break** to stop instantly.
