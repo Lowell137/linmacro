@@ -23,7 +23,9 @@ impl VirtualInput {
         let mut rels = AttributeSet::<RelativeAxisCode>::new();
         rels.insert(RelativeAxisCode::REL_X);
         rels.insert(RelativeAxisCode::REL_Y);
+        rels.insert(RelativeAxisCode::REL_Z);
         rels.insert(RelativeAxisCode::REL_WHEEL);
+        rels.insert(RelativeAxisCode::REL_HWHEEL);
 
         let mouse = VirtualDevice::builder()?
             .name("LinMacro Virtual Mouse")
@@ -71,13 +73,5 @@ impl VirtualInput {
             InputEvent::new(EventType::KEY.0, key.0, val),
             InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
         ])
-    }
-
-    pub fn key_press(&mut self, key: KeyCode, hold_ms: u64) -> io::Result<()> {
-        self.send_key(key, true)?;
-        if hold_ms > 0 {
-            thread::sleep(Duration::from_millis(hold_ms));
-        }
-        self.send_key(key, false)
     }
 }

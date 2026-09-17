@@ -3,6 +3,7 @@ use crate::virtual_device::VirtualInput;
 use evdev::EventType;
 use parking_lot::Mutex;
 use std::collections::HashSet;
+use std::fs;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -30,6 +31,7 @@ pub enum EngineEvent {
         devices_count: usize,
         virtual_device_ok: bool,
         error: Option<String>,
+        permission_warning: Option<String>,
     },
 }
 
@@ -93,7 +95,7 @@ impl EngineRunner {
             }
             Err(e) => {
                 err = Some(format!(
-                    "Virtual mouse initialization failed: {}. Check /dev/uinput permissions.",
+                    "Virtual controller could not be created: {}. Check /dev/uinput.",
                     e
                 ));
             }
@@ -126,10 +128,36 @@ impl EngineRunner {
             })
             .count();
 
+        // Check if any devices were unopenable due to permissions
+        let mut unreadable = 0;
+        if let Ok(entries) = fs::read_dir("/dev/input") {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.file_name()
+                    .map(|n| n.to_string_lossy().starts_with("event"))
+                    .unwrap_or(false)
+                {
+                    if fs::File::open(&p).is_err() {
+                        unreadable += 1;
+                    }
+                }
+            }
+        }
+
+        let perm_warn = if unreadable > 0 {
+            Some(format!(
+                "{} input device(s) need 'input' group: run `sudo usermod -aG input $USER`",
+                unreadable
+            ))
+        } else {
+            None
+        };
+
         let _ = self.event_tx.send(EngineEvent::Status {
             devices_count: count,
             virtual_device_ok: self.virtual_input.is_some(),
             error: err,
+            permission_warning: perm_warn,
         });
     }
 
@@ -199,7 +227,10 @@ impl EngineRunner {
                                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                                             thread::sleep(Duration::from_millis(5));
                                         }
-                                        Err(_) => break,
+                                        Err(_) => {
+                                            // Transient read error: back off briefly, keep watching
+                                            thread::sleep(Duration::from_millis(50));
+                                        }
                                     }
                                 }
                             })
@@ -296,26 +327,30 @@ impl EngineRunner {
         thread::Builder::new()
             .name("linmacro_click_loop".into())
             .spawn(move || {
-                let cps = cfg.cps.clamp(1, 200) as u64;
+                let cps = cfg.cps.clamp(1, 100) as u64;
                 let interval = Duration::from_micros(1_000_000 / cps);
-                let hold = Duration::from_millis(4);
+                // Realistic hold duration: scaled with interval, minimum 18ms, maximum 45ms.
+                // Browsers (Gecko / Chromium) require 15-25ms to register a full mousedown->mouseup->click!
+                let hold_ms = ((interval.as_millis() as u64) * 35 / 100).clamp(18, 45);
+                let hold = Duration::from_millis(hold_ms);
 
                 while is_clicking.load(Ordering::Relaxed) {
                     let start = Instant::now();
 
-                    // Perform Click
+                    // Mouse Down
                     {
                         let mut vi = vi_arc.lock();
                         let _ = vi.send_mouse_button(cfg.button, true);
                     }
                     thread::sleep(hold);
+                    // Mouse Up
                     {
                         let mut vi = vi_arc.lock();
                         let _ = vi.send_mouse_button(cfg.button, false);
                     }
 
                     if cfg.click_type == ClickType::Double {
-                        thread::sleep(Duration::from_millis(15));
+                        thread::sleep(Duration::from_millis(20));
                         {
                             let mut vi = vi_arc.lock();
                             let _ = vi.send_mouse_button(cfg.button, true);
@@ -328,7 +363,7 @@ impl EngineRunner {
                     }
 
                     let count = total_clicks.fetch_add(1, Ordering::Relaxed) + 1;
-                    if count % 5 == 0 {
+                    if count % 2 == 0 {
                         let _ = event_tx.send(EngineEvent::TotalClicks(count));
                     }
 
@@ -336,7 +371,6 @@ impl EngineRunner {
                     let elapsed = start.elapsed();
                     if elapsed < interval {
                         let remaining = interval - elapsed;
-                        // Sleep in slices for instant cancellation
                         let slices = remaining.as_millis() / 2;
                         for _ in 0..slices {
                             if !is_clicking.load(Ordering::Relaxed) {

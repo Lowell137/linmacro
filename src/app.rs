@@ -12,6 +12,7 @@ pub struct LinMacroApp {
     is_assigning_hotkey: bool,
     total_clicks: u64,
     status_error: Option<String>,
+    permission_warning: Option<String>,
     countdown_start: Option<Instant>,
     started_at: Option<Instant>,
 }
@@ -28,6 +29,7 @@ impl LinMacroApp {
             is_assigning_hotkey: false,
             total_clicks: 0,
             status_error: None,
+            permission_warning: None,
             countdown_start: None,
             started_at: None,
         }
@@ -54,8 +56,13 @@ impl LinMacroApp {
                     self.config.hotkey = Some(key);
                     self.save_and_sync();
                 }
-                EngineEvent::Status { error, .. } => {
+                EngineEvent::Status {
+                    error,
+                    permission_warning,
+                    ..
+                } => {
                     self.status_error = error;
+                    self.permission_warning = permission_warning;
                 }
             }
         }
@@ -84,7 +91,7 @@ impl eframe::App for LinMacroApp {
         visuals.window_corner_radius = CornerRadius::same(12);
         ui.ctx().set_visuals(visuals);
 
-        // Handle GUI button start countdown (gives user 1s to move cursor off the button!)
+        // Handle GUI button start countdown (gives user 0.8s to move cursor off the button)
         if let Some(start_time) = self.countdown_start {
             let elapsed = start_time.elapsed();
             if elapsed >= Duration::from_millis(800) {
@@ -153,9 +160,11 @@ impl eframe::App for LinMacroApp {
                         ui.label(RichText::new("Activation Key:").strong());
 
                         if self.is_assigning_hotkey {
+                            ui.label(RichText::new("⌨️ Press ANY key...").color(Color32::from_rgb(255, 200, 80)).strong());
                             let cancel_btn = egui::Button::new(RichText::new("Cancel").strong())
                                 .corner_radius(CornerRadius::same(8));
                             if ui.add(cancel_btn).clicked() {
+                                self.is_assigning_hotkey = false;
                                 let _ = self.engine.cmd_tx.send(EngineCommand::CancelKeyListen);
                             }
                         } else {
@@ -170,6 +179,7 @@ impl eframe::App for LinMacroApp {
                                 self.is_assigning_hotkey = true;
                                 let _ = self.engine.cmd_tx.send(EngineCommand::ListenForTriggerKey);
                             }
+
                             if self.config.hotkey.is_some() {
                                 let clear_btn = egui::Button::new(RichText::new("✕ Clear").small())
                                     .corner_radius(CornerRadius::same(8));
@@ -281,12 +291,11 @@ impl eframe::App for LinMacroApp {
                     Some(k) => format!(" (or press {})", format_key_name(k)),
                     None => "".to_string(),
                 };
-                let text = format!("▶ START AUTO CLICKER{}", hotkey_hint);
-                let start_btn = egui::Button::new(RichText::new(text).heading().strong().color(Color32::WHITE))
+                let btn_text = format!("▶ START AUTO CLICKER{}", hotkey_hint);
+                let start_btn = egui::Button::new(RichText::new(btn_text).heading().strong().color(Color32::WHITE))
                     .fill(Color32::from_rgb(45, 140, 240))
                     .corner_radius(CornerRadius::same(12));
                 if ui.add_sized(btn_size, start_btn).clicked() {
-                    // Start a brief 0.8s countdown so the user can move their cursor to the target window!
                     self.countdown_start = Some(Instant::now());
                 }
             }
@@ -302,6 +311,8 @@ impl eframe::App for LinMacroApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(err) = &self.status_error {
                         ui.label(RichText::new(err).color(Color32::from_rgb(255, 100, 100)).small());
+                    } else if let Some(warn) = &self.permission_warning {
+                        ui.label(RichText::new(warn).color(Color32::from_rgb(255, 180, 60)).small());
                     } else {
                         ui.label(RichText::new("Wayland & X11 Ready").weak().small());
                     }
