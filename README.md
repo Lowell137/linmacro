@@ -1,36 +1,24 @@
-# LinMacro ⚡
+# LinMacro ⚡ Auto Clicker
 
-A modern, high-performance, standalone Linux macro automation tool for **Wayland & X11**.
+A modern, lightweight, lightning-fast Auto Clicker for Linux (**Wayland & X11**).
 
-- **Distro-Independent:** No GTK/Qt runtime dependencies. Pure Rust + `egui` compiling into a single static binary.
-- **Wayland & X11 Support:** Direct kernel-level input listening (`evdev`) and synthetic emission (`/dev/uinput`).
-- **Live Recording:** Records keypresses and millisecond delays on the fly, transforming them into macros instantly.
-- **Execution Modes:**
-  - **Run Once:** Triggers macro once per keypress.
-  - **Toggle Loop:** Starts looping on keypress, stops on the next keypress.
-  - **Hold Loop:** Loops continuously while the trigger key is held down.
-- **Emergency Killswitch:** Default `Pause/Break` key immediately aborts all active loops without system locks.
+- **Clean & Focused:** Directly set your CPS (Clicks Per Second) and activation key.
+- **Wayland (GNOME/KDE/Sway/Hyprland) & X11:** Dedicated virtual mouse device recognized natively by `libinput` and `mutter`.
+- **Modes:**
+  - **Toggle Mode:** Press hotkey once to start clicking, press again to stop.
+  - **Hold Mode:** Clicks while holding the hotkey down.
+- **Emergency Killswitch:** `Pause/Break` key immediately aborts clicking.
 
 ---
 
 ## How to Run
-
-Run directly from the release binary or shell launcher:
 
 ```bash
 cd ~/Projects/linmacro
 ./run.sh
 ```
 
-Or run via cargo:
+Or run the release binary:
 ```bash
-cargo run --release
+~/Projects/linmacro/target/release/linmacro
 ```
-
----
-
-## Permissions & Setup
-
-LinMacro works without root privileges:
-1. **/dev/uinput (Virtual Input):** User sessions on modern Linux systems (`systemd-logind`) have automatic `uaccess` ACL permissions.
-2. **/dev/input/event* (Hardware Keystroke Detection):** Active keyboard and mouse devices on seat0 have session user access.
