@@ -146,7 +146,7 @@ impl EngineRunner {
 
         let perm_warn = if unreadable > 0 {
             Some(format!(
-                "{} input device(s) need 'input' group: run `sudo usermod -aG input $USER`",
+                "{} device(s) need 'input' group: run `sudo usermod -aG input $USER`",
                 unreadable
             ))
         } else {
@@ -169,6 +169,8 @@ impl EngineRunner {
             while let Ok(cmd) = self.cmd_rx.try_recv() {
                 self.handle_command(cmd);
             }
+
+            // Drain queued hardware input events
             while let Ok((key, value)) = raw_rx.try_recv() {
                 self.handle_key_event(key, value);
             }
@@ -231,7 +233,7 @@ impl EngineRunner {
                                             thread::sleep(Duration::from_millis(5));
                                         }
                                         Err(_) => {
-                                            // Transient read error: back off briefly, keep watching
+                                            // Transient error, sleep briefly and keep watching
                                             thread::sleep(Duration::from_millis(50));
                                         }
                                     }
@@ -330,60 +332,74 @@ impl EngineRunner {
         thread::Builder::new()
             .name("linmacro_click_loop".into())
             .spawn(move || {
-                let cps = cfg.cps.clamp(1, 100) as u64;
-                let interval = Duration::from_micros(1_000_000 / cps);
-                // Realistic hold duration: scaled with interval, minimum 18ms, maximum 45ms.
-                // Browsers (Gecko / Chromium) require 15-25ms to register a full mousedown->mouseup->click!
-                let hold_ms = ((interval.as_millis() as u64) * 35 / 100).clamp(18, 45);
-                let hold = Duration::from_millis(hold_ms);
-
-                while is_clicking.load(Ordering::Relaxed) {
-                    let start = Instant::now();
-
-                    // Mouse Down
-                    {
-                        let mut vi = vi_arc.lock();
-                        let _ = vi.send_mouse_button(cfg.button, true);
+                if cfg.cps == 0 {
+                    // 🚀 UNLIMITED MODE: Maximum hardware throughput
+                    while is_clicking.load(Ordering::Relaxed) {
+                        {
+                            let mut vi = vi_arc.lock();
+                            let _ = vi.send_mouse_button(cfg.button, true);
+                            let _ = vi.send_mouse_button(cfg.button, false);
+                        }
+                        let count = total_clicks.fetch_add(1, Ordering::Relaxed) + 1;
+                        if count % 20 == 0 {
+                            let _ = event_tx.send(EngineEvent::TotalClicks(count));
+                            thread::yield_now();
+                        }
                     }
-                    thread::sleep(hold);
-                    // Mouse Up
-                    {
-                        let mut vi = vi_arc.lock();
-                        let _ = vi.send_mouse_button(cfg.button, false);
-                    }
+                } else {
+                    // TARGET CPS MODE: exact interval timing without upper cap
+                    let cps = cfg.cps as u64;
+                    let interval = Duration::from_micros(1_000_000 / cps);
+                    let hold_micros = (interval.as_micros() as u64 * 35 / 100).clamp(500, 35_000);
+                    let hold = Duration::from_micros(hold_micros);
 
-                    if cfg.click_type == ClickType::Double {
-                        thread::sleep(Duration::from_millis(20));
+                    while is_clicking.load(Ordering::Relaxed) {
+                        let start = Instant::now();
+
+                        // Mouse Down
                         {
                             let mut vi = vi_arc.lock();
                             let _ = vi.send_mouse_button(cfg.button, true);
                         }
                         thread::sleep(hold);
+                        // Mouse Up
                         {
                             let mut vi = vi_arc.lock();
                             let _ = vi.send_mouse_button(cfg.button, false);
                         }
-                    }
 
-                    let count = total_clicks.fetch_add(1, Ordering::Relaxed) + 1;
-                    if count % 2 == 0 {
-                        let _ = event_tx.send(EngineEvent::TotalClicks(count));
-                    }
-
-                    // Precise sleep till next click
-                    let elapsed = start.elapsed();
-                    if elapsed < interval {
-                        let remaining = interval - elapsed;
-                        let slices = remaining.as_millis() / 2;
-                        for _ in 0..slices {
-                            if !is_clicking.load(Ordering::Relaxed) {
-                                break;
+                        if cfg.click_type == ClickType::Double {
+                            thread::sleep(Duration::from_millis(5));
+                            {
+                                let mut vi = vi_arc.lock();
+                                let _ = vi.send_mouse_button(cfg.button, true);
                             }
-                            thread::sleep(Duration::from_millis(2));
+                            thread::sleep(hold);
+                            {
+                                let mut vi = vi_arc.lock();
+                                let _ = vi.send_mouse_button(cfg.button, false);
+                            }
                         }
-                        let rem_micros = remaining.as_micros() % 2000;
-                        if rem_micros > 0 && is_clicking.load(Ordering::Relaxed) {
-                            thread::sleep(Duration::from_micros(rem_micros as u64));
+
+                        let count = total_clicks.fetch_add(1, Ordering::Relaxed) + 1;
+                        if count % 5 == 0 {
+                            let _ = event_tx.send(EngineEvent::TotalClicks(count));
+                        }
+
+                        let elapsed = start.elapsed();
+                        if elapsed < interval {
+                            let remaining = interval - elapsed;
+                            if remaining > Duration::from_millis(3) {
+                                let slices = remaining.as_millis() / 2;
+                                for _ in 0..slices {
+                                    if !is_clicking.load(Ordering::Relaxed) {
+                                        break;
+                                    }
+                                    thread::sleep(Duration::from_millis(2));
+                                }
+                            } else if is_clicking.load(Ordering::Relaxed) {
+                                thread::sleep(remaining);
+                            }
                         }
                     }
                 }

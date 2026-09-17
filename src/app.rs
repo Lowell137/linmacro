@@ -223,35 +223,60 @@ impl eframe::App for LinMacroApp {
 
             ui.add_space(8.0);
 
-            // 2. CPS Speed Control
+            // 2. CPS Speed Control (Unlimited & Uncapped)
             egui::Frame::group(ui.style())
                 .corner_radius(CornerRadius::same(10))
                 .inner_margin(Margin::same(10))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Click Speed (CPS):").strong());
-                        ui.label(RichText::new(format!("{} CPS", self.config.cps)).strong().color(Color32::from_rgb(100, 200, 255)));
-                        let delay_ms = 1000 / self.config.cps.max(1);
-                        ui.label(RichText::new(format!("({} ms interval)", delay_ms)).weak().small());
+                        ui.label(RichText::new("Click Speed:").strong());
+                        if self.config.cps == 0 {
+                            ui.label(RichText::new("🚀 UNLIMITED (Max Speed)").strong().color(Color32::from_rgb(255, 100, 100)));
+                        } else {
+                            ui.label(RichText::new(format!("{} CPS", self.config.cps)).strong().color(Color32::from_rgb(100, 200, 255)));
+                            let delay_ms = 1000.0 / self.config.cps as f32;
+                            ui.label(RichText::new(format!("({:.1} ms interval)", delay_ms)).weak().small());
+                        }
                     });
 
                     ui.add_space(6.0);
 
-                    let mut cps = self.config.cps;
-                    if ui.add(egui::Slider::new(&mut cps, 1..=100).text("Clicks / Second")).changed() {
-                        self.config.cps = cps;
-                        self.save_and_sync();
-                    }
+                    // Custom input allows typing ANY number!
+                    ui.horizontal(|ui| {
+                        ui.label("Set CPS:");
+                        let mut cps_input = self.config.cps;
+                        if ui.add(egui::DragValue::new(&mut cps_input).speed(5).range(0..=100_000)).changed() {
+                            self.config.cps = cps_input;
+                            self.save_and_sync();
+                        }
+                        if cps_input == 0 {
+                            ui.label(RichText::new("(0 = Unlimited)").weak().small());
+                        } else {
+                            ui.label(RichText::new("(Drag or click to type)").weak().small());
+                        }
+                    });
 
                     ui.add_space(6.0);
 
-                    // Quick Presets
-                    ui.horizontal(|ui| {
+                    // Quick Presets including Unlimited!
+                    ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new("Presets:").weak().small());
-                        for preset in [5, 10, 20, 50, 100] {
+                        for (preset, label) in [
+                            (10, "10"),
+                            (20, "20"),
+                            (50, "50"),
+                            (100, "100"),
+                            (500, "500"),
+                            (1000, "1000"),
+                            (0, "🚀 Unlimited"),
+                        ] {
                             let is_current = self.config.cps == preset;
-                            let text = RichText::new(format!("{} CPS", preset));
-                            let text = if is_current { text.strong().color(Color32::from_rgb(100, 200, 255)) } else { text };
+                            let text = RichText::new(label);
+                            let text = if is_current {
+                                text.strong().color(Color32::from_rgb(100, 200, 255))
+                            } else {
+                                text
+                            };
                             let btn = egui::Button::new(text).corner_radius(CornerRadius::same(8));
                             if ui.add(btn).clicked() {
                                 self.config.cps = preset;
@@ -305,7 +330,8 @@ impl eframe::App for LinMacroApp {
                     self.countdown_start = None;
                 }
             } else if self.is_clicking {
-                let text = format!("⏹️ STOP AUTO CLICKER (Clicks: {})", self.total_clicks);
+                let rate_desc = if self.config.cps == 0 { "Unlimited".to_string() } else { format!("{} CPS", self.config.cps) };
+                let text = format!("⏹️ STOP (Clicks: {} | {})", self.total_clicks, rate_desc);
                 let stop_btn = egui::Button::new(RichText::new(text).heading().strong().color(Color32::WHITE))
                     .fill(Color32::from_rgb(220, 60, 60))
                     .corner_radius(CornerRadius::same(12));
@@ -316,10 +342,11 @@ impl eframe::App for LinMacroApp {
                 }
             } else {
                 let hotkey_hint = match self.config.hotkey {
-                    Some(k) => format!(" (or press {})", format_key_name(k)),
+                    Some(k) => format!(" [{}]", format_key_name(k)),
                     None => "".to_string(),
                 };
-                let btn_text = format!("▶ START AUTO CLICKER{}", hotkey_hint);
+                let rate_hint = if self.config.cps == 0 { "Unlimited".to_string() } else { format!("{} CPS", self.config.cps) };
+                let btn_text = format!("▶ START ({}){}", rate_hint, hotkey_hint);
                 let start_btn = egui::Button::new(RichText::new(btn_text).heading().strong().color(Color32::WHITE))
                     .fill(Color32::from_rgb(45, 140, 240))
                     .corner_radius(CornerRadius::same(12));
@@ -342,7 +369,7 @@ impl eframe::App for LinMacroApp {
                     } else if let Some(warn) = &self.permission_warning {
                         ui.label(RichText::new(warn).color(Color32::from_rgb(255, 180, 60)).small());
                     } else {
-                        ui.label(RichText::new("GNOME Wayland Ready").weak().small());
+                        ui.label(RichText::new("Ready").weak().small());
                     }
                 });
             });
