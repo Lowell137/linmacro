@@ -5,7 +5,7 @@ A lightweight Linux auto-clicker for Wayland and X11.
 ## Run
 
 ```bash
-cd ~/Projects/linmacro
+cd ~/linmacro
 ./run.sh
 ```
 
