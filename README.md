@@ -9,28 +9,31 @@ A modern, lightweight, lightning-fast Auto Clicker for Linux (**Wayland & X11**)
 
 ---
 
-## Prerequisites (Dependencies)
+## Prerequisites & Dependencies
 
-To run LinMacro or its AppImage across Linux distributions, make sure `uinput` kernel module is available and your user has permissions:
+Before running LinMacro from source, install the required build dependencies for your distribution:
 
-### 1. Arch Linux
+### Arch Linux
 ```bash
-sudo modprobe uinput
-sudo usermod -aG input $USER
-```
-*(Relogin required after adding to the input group).*
-
-### 2. Fedora
-```bash
+sudo pacman -S base-devel pkgconf fontconfig libx11 libxi wayland
 sudo modprobe uinput
 sudo usermod -aG input $USER
 ```
 
-### 3. Debian / Ubuntu / Mint
+### Fedora
 ```bash
+sudo dnf install @development-tools pkgconfig fontconfig-devel libX11-devel libXi-devel wayland-devel
 sudo modprobe uinput
 sudo usermod -aG input $USER
 ```
+
+### Debian / Ubuntu / Mint
+```bash
+sudo apt update && sudo apt install build-essential pkg-config libfontconfig1-dev libx11-dev libxi-dev libwayland-dev
+sudo modprobe uinput
+sudo usermod -aG input $USER
+```
+*(Relogin required after adding your user to the input group).*
 
 ---
 
