@@ -169,6 +169,9 @@ impl EngineRunner {
             while let Ok(cmd) = self.cmd_rx.try_recv() {
                 self.handle_command(cmd);
             }
+            while let Ok((key, value)) = raw_rx.try_recv() {
+                self.handle_key_event(key, value);
+            }
 
             match raw_rx.recv_timeout(Duration::from_millis(5)) {
                 Ok((key, value)) => {
