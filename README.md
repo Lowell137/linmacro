@@ -9,27 +9,20 @@ A modern, lightweight, lightning-fast Auto Clicker for Linux (**Wayland & X11**)
 
 ---
 
-## Prerequisites & Dependencies
+## How to Run (Precompiled Binary - No FUSE Required)
 
-Before running LinMacro from source, install the required build dependencies for your distribution:
+Download `linmacro-linux-x86_64.tar.gz` from [Releases](https://github.com/Lowell137/linmacro/releases), extract it, and run:
 
-### Arch Linux
 ```bash
-sudo pacman -S base-devel pkgconf fontconfig libx11 libxi wayland
-sudo modprobe uinput
-sudo usermod -aG input $USER
+tar -xzvf linmacro-linux-x86_64.tar.gz
+./linmacro
 ```
 
-### Fedora
-```bash
-sudo dnf install @development-tools pkgconfig fontconfig-devel libX11-devel libXi-devel wayland-devel fuse
-sudo modprobe uinput
-sudo usermod -aG input $USER
-```
+---
 
-### Debian / Ubuntu / Mint
+## Prerequisites (for hotkeys & virtual input)
+
 ```bash
-sudo apt update && sudo apt install build-essential pkg-config libfontconfig1-dev libx11-dev libxi-dev libwayland-dev libfuse2
 sudo modprobe uinput
 sudo usermod -aG input $USER
 ```
@@ -37,16 +30,9 @@ sudo usermod -aG input $USER
 
 ---
 
-## How to Run
-
-Download the `LinMacro-x86_64.AppImage` from [Releases](https://github.com/Lowell137/linmacro/releases), make it executable, and run:
+## Build from Source
 
 ```bash
-chmod +x LinMacro-x86_64.AppImage
-./LinMacro-x86_64.AppImage
-```
-
-Or run from source:
-```bash
-cargo run --release
+cargo build --release
+./target/release/linmacro
 ```
