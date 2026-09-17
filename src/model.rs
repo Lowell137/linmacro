@@ -9,8 +9,6 @@ pub enum MouseButton {
     Left,
     Right,
     Middle,
-    Side,
-    Extra,
 }
 
 impl MouseButton {
@@ -19,8 +17,6 @@ impl MouseButton {
             MouseButton::Left => KeyCode::BTN_LEFT,
             MouseButton::Right => KeyCode::BTN_RIGHT,
             MouseButton::Middle => KeyCode::BTN_MIDDLE,
-            MouseButton::Side => KeyCode::BTN_SIDE,
-            MouseButton::Extra => KeyCode::BTN_EXTRA,
         }
     }
 
@@ -29,167 +25,64 @@ impl MouseButton {
             MouseButton::Left => "Left Click",
             MouseButton::Right => "Right Click",
             MouseButton::Middle => "Middle Click",
-            MouseButton::Side => "Side Button 1 (Back)",
-            MouseButton::Extra => "Side Button 2 (Forward)",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Action {
-    KeyDown(KeyCode),
-    KeyUp(KeyCode),
-    KeyPress { key: KeyCode, hold_ms: u64 },
-    MouseDown(MouseButton),
-    MouseUp(MouseButton),
-    MouseClick { button: MouseButton, hold_ms: u64 },
-    MouseMove { dx: i32, dy: i32 },
-    MouseWheel { delta: i32 },
-    Delay(u64),
-    TypeText(String),
-}
-
-impl Action {
-    pub fn summary(&self) -> String {
-        match self {
-            Action::KeyDown(k) => format!("Key Down: {}", format_key_name(*k)),
-            Action::KeyUp(k) => format!("Key Up: {}", format_key_name(*k)),
-            Action::KeyPress { key, hold_ms } => {
-                format!("Key Press: {} ({} ms)", format_key_name(*key), hold_ms)
-            }
-            Action::MouseDown(b) => format!("Mouse Down: {}", b.name()),
-            Action::MouseUp(b) => format!("Mouse Up: {}", b.name()),
-            Action::MouseClick { button, hold_ms } => {
-                format!("Mouse Click: {} ({} ms)", button.name(), hold_ms)
-            }
-            Action::MouseMove { dx, dy } => format!("Mouse Move: dx={}, dy={}", dx, dy),
-            Action::MouseWheel { delta } => {
-                if *delta > 0 {
-                    format!("Mouse Wheel: Up ({})", delta)
-                } else {
-                    format!("Mouse Wheel: Down ({})", delta.abs())
-                }
-            }
-            Action::Delay(ms) => format!("Delay: {} ms", ms),
-            Action::TypeText(text) => format!("Type Text: \"{}\"", text),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TriggerMode {
-    Once,
-    ToggleLoop,
-    HoldLoop,
+pub enum ClickType {
+    Single,
+    Double,
 }
 
-impl TriggerMode {
+impl ClickType {
     pub fn name(self) -> &'static str {
         match self {
-            TriggerMode::Once => "Run Once",
-            TriggerMode::ToggleLoop => "Toggle Loop (Start/Stop)",
-            TriggerMode::HoldLoop => "Hold Loop (While Pressed)",
+            ClickType::Single => "Single",
+            ClickType::Double => "Double",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClickMode {
+    Toggle, // Press key once to start, press again to stop
+    Hold,   // Click while key is held down
+}
+
+impl ClickMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            ClickMode::Toggle => "Toggle (Press to Start/Stop)",
+            ClickMode::Hold => "Hold (Click while holding key)",
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Macro {
-    pub id: String,
-    pub name: String,
-    pub enabled: bool,
-    pub trigger_key: Option<KeyCode>,
-    pub trigger_mode: TriggerMode,
-    /// 0 = infinite loop (in ToggleLoop/HoldLoop), N = repeat N times
-    pub repeat_count: u32,
-    pub actions: Vec<Action>,
+pub struct ClickerConfig {
+    pub cps: u32,
+    pub button: MouseButton,
+    pub click_type: ClickType,
+    pub mode: ClickMode,
+    pub hotkey: Option<KeyCode>,
+    pub killswitch: KeyCode,
 }
 
-impl Macro {
-    pub fn new(name: impl Into<String>) -> Self {
-        let id = format!(
-            "m_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0)
-        );
-        Self {
-            id,
-            name: name.into(),
-            enabled: true,
-            trigger_key: None,
-            trigger_mode: TriggerMode::Once,
-            repeat_count: 1,
-            actions: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppConfig {
-    pub global_enabled: bool,
-    pub killswitch_key: KeyCode,
-    pub macros: Vec<Macro>,
-}
-
-impl Default for AppConfig {
+impl Default for ClickerConfig {
     fn default() -> Self {
         Self {
-            global_enabled: true,
-            killswitch_key: KeyCode::KEY_PAUSE,
-            macros: vec![
-                Macro {
-                    id: "sample_autoclicker".into(),
-                    name: "Rapid Auto Clicker (Left Click)".into(),
-                    enabled: true,
-                    trigger_key: Some(KeyCode::KEY_F8),
-                    trigger_mode: TriggerMode::ToggleLoop,
-                    repeat_count: 0,
-                    actions: vec![
-                        Action::MouseClick {
-                            button: MouseButton::Left,
-                            hold_ms: 15,
-                        },
-                        Action::Delay(40),
-                    ],
-                },
-                Macro {
-                    id: "sample_combo".into(),
-                    name: "Sample Combo (Q + E)".into(),
-                    enabled: true,
-                    trigger_key: Some(KeyCode::KEY_F7),
-                    trigger_mode: TriggerMode::Once,
-                    repeat_count: 1,
-                    actions: vec![
-                        Action::KeyPress {
-                            key: KeyCode::KEY_Q,
-                            hold_ms: 30,
-                        },
-                        Action::Delay(50),
-                        Action::KeyPress {
-                            key: KeyCode::KEY_E,
-                            hold_ms: 30,
-                        },
-                    ],
-                },
-                Macro {
-                    id: "sample_text".into(),
-                    name: "Text Macro (Hello World)".into(),
-                    enabled: true,
-                    trigger_key: Some(KeyCode::KEY_F6),
-                    trigger_mode: TriggerMode::Once,
-                    repeat_count: 1,
-                    actions: vec![
-                        Action::TypeText("Hello from LinMacro!\n".into()),
-                    ],
-                },
-            ],
+            cps: 20,
+            button: MouseButton::Left,
+            click_type: ClickType::Single,
+            mode: ClickMode::Toggle,
+            hotkey: Some(KeyCode::KEY_F8),
+            killswitch: KeyCode::KEY_PAUSE,
         }
     }
 }
 
-impl AppConfig {
+impl ClickerConfig {
     fn config_path() -> PathBuf {
         let base = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
             PathBuf::from(xdg)
@@ -198,13 +91,13 @@ impl AppConfig {
         } else {
             PathBuf::from(".")
         };
-        base.join("linmacro").join("config.json")
+        base.join("linmacro").join("clicker.json")
     }
 
     pub fn load() -> Self {
         let path = Self::config_path();
         if let Ok(data) = fs::read_to_string(&path) {
-            if let Ok(cfg) = serde_json::from_str::<AppConfig>(&data) {
+            if let Ok(cfg) = serde_json::from_str::<ClickerConfig>(&data) {
                 return cfg;
             }
         }
@@ -239,8 +132,8 @@ pub fn format_key_name(key: KeyCode) -> String {
         "RIGHTCTRL" => "Right Ctrl".into(),
         "LEFTALT" => "Left Alt".into(),
         "RIGHTALT" => "Right Alt".into(),
-        "LEFTMETA" => "Super / Windows (Left)".into(),
-        "RIGHTMETA" => "Super / Windows (Right)".into(),
+        "LEFTMETA" => "Super / Win (Left)".into(),
+        "RIGHTMETA" => "Super / Win (Right)".into(),
         "CAPSLOCK" => "Caps Lock".into(),
         "PAUSE" => "Pause/Break".into(),
         "UP" => "Up Arrow".into(),
@@ -253,20 +146,7 @@ pub fn format_key_name(key: KeyCode) -> String {
         "END" => "End".into(),
         "PAGEUP" => "Page Up".into(),
         "PAGEDOWN" => "Page Down".into(),
-        other => {
-            if let Some(btn) = other.strip_prefix("BTN_") {
-                match btn {
-                    "LEFT" => "Mouse Left Click".into(),
-                    "RIGHT" => "Mouse Right Click".into(),
-                    "MIDDLE" => "Mouse Middle Click".into(),
-                    "SIDE" => "Mouse Side Button 1".into(),
-                    "EXTRA" => "Mouse Side Button 2".into(),
-                    _ => format!("Mouse {}", btn),
-                }
-            } else {
-                other.to_string()
-            }
-        }
+        other => other.to_string(),
     }
 }
 
@@ -338,14 +218,6 @@ pub fn egui_key_to_keycode(key: egui::Key) -> Option<KeyCode> {
         egui::Key::ArrowDown => Some(KeyCode::KEY_DOWN),
         egui::Key::ArrowLeft => Some(KeyCode::KEY_LEFT),
         egui::Key::ArrowRight => Some(KeyCode::KEY_RIGHT),
-
-        egui::Key::Minus => Some(KeyCode::KEY_MINUS),
-        egui::Key::Equals => Some(KeyCode::KEY_EQUAL),
-        egui::Key::Semicolon => Some(KeyCode::KEY_SEMICOLON),
-        egui::Key::Comma => Some(KeyCode::KEY_COMMA),
-        egui::Key::Period => Some(KeyCode::KEY_DOT),
-        egui::Key::Slash => Some(KeyCode::KEY_SLASH),
-        egui::Key::Backtick => Some(KeyCode::KEY_GRAVE),
         _ => None,
     }
 }

@@ -9,9 +9,10 @@ use eframe::egui;
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([960.0, 640.0])
-            .with_min_inner_size([720.0, 480.0])
-            .with_title("LinMacro - Linux Makro Yöneticisi"),
+            .with_inner_size([480.0, 420.0])
+            .with_min_inner_size([420.0, 380.0])
+            .with_resizable(true)
+            .with_title("LinMacro - Auto Clicker"),
         ..Default::default()
     };
 

@@ -1,10 +1,10 @@
-use crate::model::{Action, AppConfig, KeyCode, Macro, MouseButton, TriggerMode};
+use crate::model::{ClickMode, ClickType, ClickerConfig, KeyCode};
 use crate::virtual_device::VirtualInput;
 use evdev::EventType;
 use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -12,25 +12,22 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub enum EngineCommand {
-    UpdateConfig(AppConfig),
-    StartRecording,
-    StopRecording,
+    UpdateConfig(ClickerConfig),
+    StartClicking,
+    StopClicking,
+    ToggleClicking,
     ListenForTriggerKey,
     CancelKeyListen,
-    RunMacro(Macro),
-    StopMacro(String),
-    StopAll,
 }
 
 #[derive(Debug, Clone)]
 pub enum EngineEvent {
-    RecordingAction(Action),
-    RecordingFinished(Vec<Action>),
+    ClickingStarted,
+    ClickingStopped,
+    TotalClicks(u64),
     KeyDetected(KeyCode),
-    MacroStarted(String),
-    MacroStopped(String),
     Status {
-        accessible_devices: usize,
+        devices_count: usize,
         virtual_device_ok: bool,
         error: Option<String>,
     },
@@ -43,24 +40,17 @@ pub struct EngineHandle {
 }
 
 impl EngineHandle {
-    pub fn new(initial_config: AppConfig) -> Self {
+    pub fn new(config: ClickerConfig) -> Self {
         let (cmd_tx, cmd_rx) = channel();
         let (event_tx, event_rx) = channel();
         let is_running = Arc::new(AtomicBool::new(true));
 
-        let runner = EngineRunner::new(
-            initial_config,
-            cmd_rx,
-            event_tx,
-            Arc::clone(&is_running),
-        );
+        let runner = EngineRunner::new(config, cmd_rx, event_tx, Arc::clone(&is_running));
 
         thread::Builder::new()
             .name("linmacro_engine".into())
-            .spawn(move || {
-                runner.run();
-            })
-            .expect("Engine thread failed to spawn");
+            .spawn(move || runner.run())
+            .expect("Failed to spawn engine thread");
 
         Self {
             cmd_tx,
@@ -77,22 +67,19 @@ impl Drop for EngineHandle {
 }
 
 struct EngineRunner {
-    config: AppConfig,
+    config: ClickerConfig,
     cmd_rx: Receiver<EngineCommand>,
     event_tx: Sender<EngineEvent>,
     is_running: Arc<AtomicBool>,
     virtual_input: Option<Arc<Mutex<VirtualInput>>>,
-    recording: bool,
-    recording_actions: Vec<Action>,
-    last_record_time: Option<Instant>,
+    is_clicking: Arc<AtomicBool>,
+    total_clicks: Arc<AtomicU64>,
     listening_for_trigger: bool,
-    active_macro_stops: Arc<Mutex<HashSet<String>>>,
-    active_keys_held: HashSet<KeyCode>,
 }
 
 impl EngineRunner {
     fn new(
-        config: AppConfig,
+        config: ClickerConfig,
         cmd_rx: Receiver<EngineCommand>,
         event_tx: Sender<EngineEvent>,
         is_running: Arc<AtomicBool>,
@@ -106,11 +93,14 @@ impl EngineRunner {
             }
             Err(e) => {
                 err = Some(format!(
-                    "Virtual controller could not be initialized: {}. Check /dev/uinput permissions.",
+                    "Virtual mouse initialization failed: {}. Check /dev/uinput permissions.",
                     e
                 ));
             }
         }
+
+        let is_clicking = Arc::new(AtomicBool::new(false));
+        let total_clicks = Arc::new(AtomicU64::new(0));
 
         let runner = Self {
             config,
@@ -118,12 +108,9 @@ impl EngineRunner {
             event_tx,
             is_running,
             virtual_input,
-            recording: false,
-            recording_actions: Vec::new(),
-            last_record_time: None,
+            is_clicking,
+            total_clicks,
             listening_for_trigger: false,
-            active_macro_stops: Arc::new(Mutex::new(HashSet::new())),
-            active_keys_held: HashSet::new(),
         };
 
         runner.emit_status(err);
@@ -140,7 +127,7 @@ impl EngineRunner {
             .count();
 
         let _ = self.event_tx.send(EngineEvent::Status {
-            accessible_devices: count,
+            devices_count: count,
             virtual_device_ok: self.virtual_input.is_some(),
             error: err,
         });
@@ -148,7 +135,6 @@ impl EngineRunner {
 
     fn run(mut self) {
         let (raw_tx, raw_rx) = channel::<(KeyCode, i32)>();
-
         self.spawn_device_watchers(raw_tx);
 
         while self.is_running.load(Ordering::Relaxed) {
@@ -170,14 +156,13 @@ impl EngineRunner {
         let is_running = Arc::clone(&self.is_running);
 
         thread::Builder::new()
-            .name("linmacro_device_scanner".into())
+            .name("linmacro_scanner".into())
             .spawn(move || {
                 let mut watched_paths = HashSet::new();
 
                 while is_running.load(Ordering::Relaxed) {
                     for (path, mut device) in evdev::enumerate() {
                         let name = device.name().unwrap_or("").to_string();
-                        // Ignore our own virtual device
                         if name.contains("LinMacro") || name.contains("Virtual") {
                             continue;
                         }
@@ -191,7 +176,6 @@ impl EngineRunner {
                             continue;
                         }
 
-                        // Set nonblocking to prevent thread stalls
                         let _ = device.set_nonblocking(true);
                         watched_paths.insert(path_str.clone());
 
@@ -215,9 +199,7 @@ impl EngineRunner {
                                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                                             thread::sleep(Duration::from_millis(5));
                                         }
-                                        Err(_) => {
-                                            break;
-                                        }
+                                        Err(_) => break,
                                     }
                                 }
                             })
@@ -234,16 +216,18 @@ impl EngineRunner {
             EngineCommand::UpdateConfig(cfg) => {
                 self.config = cfg;
             }
-            EngineCommand::StartRecording => {
-                self.recording = true;
-                self.recording_actions.clear();
-                self.last_record_time = Some(Instant::now());
+            EngineCommand::StartClicking => {
+                self.start_clicking();
             }
-            EngineCommand::StopRecording => {
-                self.recording = false;
-                self.last_record_time = None;
-                let actions = std::mem::take(&mut self.recording_actions);
-                let _ = self.event_tx.send(EngineEvent::RecordingFinished(actions));
+            EngineCommand::StopClicking => {
+                self.stop_clicking();
+            }
+            EngineCommand::ToggleClicking => {
+                if self.is_clicking.load(Ordering::Relaxed) {
+                    self.stop_clicking();
+                } else {
+                    self.start_clicking();
+                }
             }
             EngineCommand::ListenForTriggerKey => {
                 self.listening_for_trigger = true;
@@ -251,99 +235,37 @@ impl EngineRunner {
             EngineCommand::CancelKeyListen => {
                 self.listening_for_trigger = false;
             }
-            EngineCommand::RunMacro(m) => {
-                self.execute_macro(m);
-            }
-            EngineCommand::StopMacro(id) => {
-                let mut stops = self.active_macro_stops.lock();
-                stops.insert(id.clone());
-                let _ = self.event_tx.send(EngineEvent::MacroStopped(id));
-            }
-            EngineCommand::StopAll => {
-                {
-                    let mut stops = self.active_macro_stops.lock();
-                    for m in &self.config.macros {
-                        stops.insert(m.id.clone());
-                        let _ = self.event_tx.send(EngineEvent::MacroStopped(m.id.clone()));
-                    }
-                }
-                self.release_all_held_keys();
-            }
         }
     }
 
     fn handle_key_event(&mut self, key: KeyCode, value: i32) {
-        if value == 1 && key == self.config.killswitch_key {
-            self.handle_command(EngineCommand::StopAll);
+        // Emergency killswitch: Pause/Break
+        if value == 1 && key == self.config.killswitch {
+            self.stop_clicking();
             return;
         }
 
+        // Assigning key mode
         if self.listening_for_trigger && value == 1 {
             self.listening_for_trigger = false;
             let _ = self.event_tx.send(EngineEvent::KeyDetected(key));
             return;
         }
 
-        if self.recording {
-            if value == 0 || value == 1 {
-                let now = Instant::now();
-                if let Some(last) = self.last_record_time {
-                    let elapsed = now.duration_since(last).as_millis() as u64;
-                    if elapsed >= 10 {
-                        let delay_action = Action::Delay(elapsed);
-                        self.recording_actions.push(delay_action.clone());
-                        let _ = self.event_tx.send(EngineEvent::RecordingAction(delay_action));
+        // Check if key is configured hotkey
+        if let Some(hotkey) = self.config.hotkey {
+            if key == hotkey {
+                match self.config.mode {
+                    ClickMode::Toggle => {
+                        if value == 1 {
+                            self.handle_command(EngineCommand::ToggleClicking);
+                        }
                     }
-                }
-                self.last_record_time = Some(now);
-
-                let action = if value == 1 {
-                    Action::KeyDown(key)
-                } else {
-                    Action::KeyUp(key)
-                };
-                self.recording_actions.push(action.clone());
-                let _ = self.event_tx.send(EngineEvent::RecordingAction(action));
-            }
-            return;
-        }
-
-        if !self.config.global_enabled {
-            return;
-        }
-
-        for m in self.config.macros.clone() {
-            if !m.enabled {
-                continue;
-            }
-            if let Some(trigger) = m.trigger_key {
-                if trigger == key {
-                    match m.trigger_mode {
-                        TriggerMode::Once => {
-                            if value == 1 {
-                                self.execute_macro(m);
-                            }
-                        }
-                        TriggerMode::ToggleLoop => {
-                            if value == 1 {
-                                let mut stops = self.active_macro_stops.lock();
-                                if stops.contains(&m.id) {
-                                    stops.insert(m.id.clone());
-                                    let _ = self.event_tx.send(EngineEvent::MacroStopped(m.id.clone()));
-                                } else {
-                                    drop(stops);
-                                    self.execute_macro(m);
-                                }
-                            }
-                        }
-                        TriggerMode::HoldLoop => {
-                            if value == 1 {
-                                self.execute_macro(m);
-                            } else if value == 0 {
-                                let mut stops = self.active_macro_stops.lock();
-                                stops.insert(m.id.clone());
-                                let _ = self.event_tx.send(EngineEvent::MacroStopped(m.id.clone()));
-                            }
+                    ClickMode::Hold => {
+                        if value == 1 {
+                            self.start_clicking();
+                        } else if value == 0 {
+                            self.stop_clicking();
                         }
                     }
                 }
@@ -351,158 +273,97 @@ impl EngineRunner {
         }
     }
 
-    fn execute_macro(&mut self, m: Macro) {
-        let macro_id = m.id.clone();
-        let active_stops = Arc::clone(&self.active_macro_stops);
-        let event_tx = self.event_tx.clone();
+    fn start_clicking(&mut self) {
+        if self.is_clicking.swap(true, Ordering::Relaxed) {
+            return; // already clicking
+        }
+
+        let _ = self.event_tx.send(EngineEvent::ClickingStarted);
 
         let vi_arc = match &self.virtual_input {
             Some(vi) => Arc::clone(vi),
             None => {
-                let _ = event_tx.send(EngineEvent::Status {
-                    accessible_devices: 0,
-                    virtual_device_ok: false,
-                    error: Some("Virtual controller not initialized.".into()),
-                });
+                self.is_clicking.store(false, Ordering::Relaxed);
                 return;
             }
         };
 
-        {
-            let mut stops = active_stops.lock();
-            stops.remove(&macro_id);
-        }
-
-        let _ = event_tx.send(EngineEvent::MacroStarted(macro_id.clone()));
+        let is_clicking = Arc::clone(&self.is_clicking);
+        let total_clicks = Arc::clone(&self.total_clicks);
+        let event_tx = self.event_tx.clone();
+        let cfg = self.config.clone();
 
         thread::Builder::new()
-            .name(format!("macro_{}", macro_id))
+            .name("linmacro_click_loop".into())
             .spawn(move || {
-                let is_loop = m.trigger_mode != TriggerMode::Once;
-                let mut iterations = 0;
+                let cps = cfg.cps.clamp(1, 200) as u64;
+                let interval = Duration::from_micros(1_000_000 / cps);
+                let hold = Duration::from_millis(4);
 
-                'outer: loop {
+                while is_clicking.load(Ordering::Relaxed) {
+                    let start = Instant::now();
+
+                    // Perform Click
                     {
-                        let stops = active_stops.lock();
-                        if stops.contains(&macro_id) {
-                            break 'outer;
-                        }
+                        let mut vi = vi_arc.lock();
+                        let _ = vi.send_mouse_button(cfg.button, true);
+                    }
+                    thread::sleep(hold);
+                    {
+                        let mut vi = vi_arc.lock();
+                        let _ = vi.send_mouse_button(cfg.button, false);
                     }
 
-                    for action in &m.actions {
+                    if cfg.click_type == ClickType::Double {
+                        thread::sleep(Duration::from_millis(15));
                         {
-                            let stops = active_stops.lock();
-                            if stops.contains(&macro_id) {
-                                break 'outer;
-                            }
+                            let mut vi = vi_arc.lock();
+                            let _ = vi.send_mouse_button(cfg.button, true);
                         }
-
-                        match action {
-                            Action::KeyDown(k) => {
-                                let mut vi = vi_arc.lock();
-                                let _ = vi.send_key(*k, true);
-                            }
-                            Action::KeyUp(k) => {
-                                let mut vi = vi_arc.lock();
-                                let _ = vi.send_key(*k, false);
-                            }
-                            Action::KeyPress { key, hold_ms } => {
-                                {
-                                    let mut vi = vi_arc.lock();
-                                    let _ = vi.send_key(*key, true);
-                                }
-                                if *hold_ms > 0 {
-                                    thread::sleep(Duration::from_millis(*hold_ms));
-                                }
-                                {
-                                    let mut vi = vi_arc.lock();
-                                    let _ = vi.send_key(*key, false);
-                                }
-                            }
-                            Action::MouseDown(b) => {
-                                let mut vi = vi_arc.lock();
-                                let _ = vi.send_mouse_button(*b, true);
-                            }
-                            Action::MouseUp(b) => {
-                                let mut vi = vi_arc.lock();
-                                let _ = vi.send_mouse_button(*b, false);
-                            }
-                            Action::MouseClick { button, hold_ms } => {
-                                {
-                                    let mut vi = vi_arc.lock();
-                                    let _ = vi.send_mouse_button(*button, true);
-                                }
-                                if *hold_ms > 0 {
-                                    thread::sleep(Duration::from_millis(*hold_ms));
-                                }
-                                {
-                                    let mut vi = vi_arc.lock();
-                                    let _ = vi.send_mouse_button(*button, false);
-                                }
-                            }
-                            Action::MouseMove { dx, dy } => {
-                                let mut vi = vi_arc.lock();
-                                let _ = vi.mouse_move(*dx, *dy);
-                            }
-                            Action::MouseWheel { delta } => {
-                                let mut vi = vi_arc.lock();
-                                let _ = vi.mouse_wheel(*delta);
-                            }
-                            Action::Delay(ms) => {
-                                let slices = ms / 5;
-                                let rem = ms % 5;
-                                for _ in 0..slices {
-                                    {
-                                        let stops = active_stops.lock();
-                                        if stops.contains(&macro_id) {
-                                            break 'outer;
-                                        }
-                                    }
-                                    thread::sleep(Duration::from_millis(5));
-                                }
-                                if rem > 0 {
-                                    thread::sleep(Duration::from_millis(rem));
-                                }
-                            }
-                            Action::TypeText(text) => {
-                                let mut vi = vi_arc.lock();
-                                let _ = vi.type_text(text, 10);
-                            }
+                        thread::sleep(hold);
+                        {
+                            let mut vi = vi_arc.lock();
+                            let _ = vi.send_mouse_button(cfg.button, false);
                         }
                     }
 
-                    iterations += 1;
-                    if !is_loop {
-                        break;
+                    let count = total_clicks.fetch_add(1, Ordering::Relaxed) + 1;
+                    if count % 5 == 0 {
+                        let _ = event_tx.send(EngineEvent::TotalClicks(count));
                     }
-                    if m.repeat_count > 0 && iterations >= m.repeat_count {
-                        break;
+
+                    // Precise sleep till next click
+                    let elapsed = start.elapsed();
+                    if elapsed < interval {
+                        let remaining = interval - elapsed;
+                        // Sleep in slices for instant cancellation
+                        let slices = remaining.as_millis() / 2;
+                        for _ in 0..slices {
+                            if !is_clicking.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            thread::sleep(Duration::from_millis(2));
+                        }
+                        let rem_micros = remaining.as_micros() % 2000;
+                        if rem_micros > 0 && is_clicking.load(Ordering::Relaxed) {
+                            thread::sleep(Duration::from_micros(rem_micros as u64));
+                        }
                     }
                 }
 
-                {
-                    let mut stops = active_stops.lock();
-                    stops.remove(&macro_id);
-                }
-                let _ = event_tx.send(EngineEvent::MacroStopped(macro_id));
+                let final_count = total_clicks.load(Ordering::Relaxed);
+                let _ = event_tx.send(EngineEvent::TotalClicks(final_count));
+                let _ = event_tx.send(EngineEvent::ClickingStopped);
             })
             .ok();
     }
 
-    fn release_all_held_keys(&mut self) {
-        if let Some(vi_arc) = &self.virtual_input {
-            let mut vi = vi_arc.lock();
-            for key in self.active_keys_held.drain() {
-                let _ = vi.send_key(key, false);
-            }
-            for btn in [
-                MouseButton::Left,
-                MouseButton::Right,
-                MouseButton::Middle,
-                MouseButton::Side,
-                MouseButton::Extra,
-            ] {
-                let _ = vi.send_mouse_button(btn, false);
+    fn stop_clicking(&mut self) {
+        if self.is_clicking.swap(false, Ordering::Relaxed) {
+            let _ = self.event_tx.send(EngineEvent::ClickingStopped);
+            if let Some(vi) = &self.virtual_input {
+                let mut vi = vi.lock();
+                let _ = vi.send_mouse_button(self.config.button, false);
             }
         }
     }
