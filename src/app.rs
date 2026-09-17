@@ -1,4 +1,5 @@
 use crate::engine::{EngineCommand, EngineEvent, EngineHandle};
+use crate::ipc;
 use crate::model::{
     egui_key_to_keycode, format_key_name, ClickMode, ClickerConfig, MouseButton,
 };
@@ -15,6 +16,7 @@ pub struct LinMacroApp {
     permission_warning: Option<String>,
     countdown_start: Option<Instant>,
     started_at: Option<Instant>,
+    gnome_synced: bool,
 }
 
 impl LinMacroApp {
@@ -22,7 +24,10 @@ impl LinMacroApp {
         let config = ClickerConfig::load();
         let engine = EngineHandle::new(config.clone());
 
-        Self {
+        // Start Unix domain socket listener for IPC (e.g. linmacro --toggle)
+        ipc::start_ipc_server(engine.cmd_tx.clone());
+
+        let mut app = Self {
             config,
             engine,
             is_clicking: false,
@@ -32,6 +37,23 @@ impl LinMacroApp {
             permission_warning: None,
             countdown_start: None,
             started_at: None,
+            gnome_synced: false,
+        };
+
+        app.sync_gnome_shortcut();
+        app
+    }
+
+    fn sync_gnome_shortcut(&mut self) {
+        if let Some(key) = self.config.hotkey {
+            let key_name = format!("{:?}", key);
+            let s = key_name.strip_prefix("KEY_").unwrap_or(&key_name);
+            let binding = match s {
+                "ESC" => "Escape",
+                "SPACE" => "space",
+                other => other,
+            };
+            self.gnome_synced = ipc::register_gnome_shortcut(binding);
         }
     }
 
@@ -74,6 +96,7 @@ impl LinMacroApp {
             .engine
             .cmd_tx
             .send(EngineCommand::UpdateConfig(self.config.clone()));
+        self.sync_gnome_shortcut();
     }
 }
 
@@ -189,6 +212,12 @@ impl eframe::App for LinMacroApp {
                                 }
                             }
                         }
+
+                        if self.gnome_synced {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new("GNOME Shortcut Active").small().color(Color32::from_rgb(100, 200, 255)));
+                            });
+                        }
                     });
                 });
 
@@ -281,7 +310,6 @@ impl eframe::App for LinMacroApp {
                     .fill(Color32::from_rgb(220, 60, 60))
                     .corner_radius(CornerRadius::same(12));
 
-                // Anti-self-click guard: ignore clicks for the first 400ms after starting
                 let can_stop_by_mouse = self.started_at.map(|t| t.elapsed() > Duration::from_millis(400)).unwrap_or(true);
                 if ui.add_sized(btn_size, stop_btn).clicked() && can_stop_by_mouse {
                     let _ = self.engine.cmd_tx.send(EngineCommand::StopClicking);
@@ -314,7 +342,7 @@ impl eframe::App for LinMacroApp {
                     } else if let Some(warn) = &self.permission_warning {
                         ui.label(RichText::new(warn).color(Color32::from_rgb(255, 180, 60)).small());
                     } else {
-                        ui.label(RichText::new("Wayland & X11 Ready").weak().small());
+                        ui.label(RichText::new("GNOME Wayland Ready").weak().small());
                     }
                 });
             });
