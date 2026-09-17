@@ -223,7 +223,7 @@ impl eframe::App for LinMacroApp {
 
             ui.add_space(8.0);
 
-            // 2. CPS Speed Control (Unlimited & Uncapped)
+            // 2. CPS Speed Control (Slider & Presets)
             egui::Frame::group(ui.style())
                 .corner_radius(CornerRadius::same(10))
                 .inner_margin(Margin::same(10))
@@ -241,21 +241,16 @@ impl eframe::App for LinMacroApp {
 
                     ui.add_space(6.0);
 
-                    // Custom input allows typing ANY number!
-                    ui.horizontal(|ui| {
-                        ui.label("Set CPS:");
-                        let mut cps_input = self.config.cps;
-                        if ui.add(egui::DragValue::new(&mut cps_input).speed(5).range(0..=100_000)).changed() {
-                            self.config.cps = cps_input;
-                            self.save_and_sync();
-                        }
-                        if cps_input == 0 {
-                            ui.label(RichText::new("(0 = Unlimited)").weak().small());
-                        } else {
-                            ui.label(RichText::new("(Drag or click to type)").weak().small());
-                        }
-                    });
-
+                    // Draggable Slider with logarithmic scaling (smooth from 1 to 5000 CPS!)
+                    let mut slider_cps = self.config.cps.max(1);
+                    if ui.add(
+                        egui::Slider::new(&mut slider_cps, 1..=5000)
+                            .logarithmic(true)
+                            .text("Clicks / Sec")
+                    ).changed() {
+                        self.config.cps = slider_cps;
+                        self.save_and_sync();
+                    }
                     ui.add_space(6.0);
 
                     // Quick Presets including Unlimited!
