@@ -22,14 +22,14 @@ sudo usermod -aG input $USER
 
 ### Fedora
 ```bash
-sudo dnf install @development-tools pkgconfig fontconfig-devel libX11-devel libXi-devel wayland-devel
+sudo dnf install @development-tools pkgconfig fontconfig-devel libX11-devel libXi-devel wayland-devel fuse
 sudo modprobe uinput
 sudo usermod -aG input $USER
 ```
 
 ### Debian / Ubuntu / Mint
 ```bash
-sudo apt update && sudo apt install build-essential pkg-config libfontconfig1-dev libx11-dev libxi-dev libwayland-dev
+sudo apt update && sudo apt install build-essential pkg-config libfontconfig1-dev libx11-dev libxi-dev libwayland-dev libfuse2
 sudo modprobe uinput
 sudo usermod -aG input $USER
 ```
